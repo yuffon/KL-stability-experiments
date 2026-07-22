@@ -1,0 +1,3 @@
+import evaluate_utils
+
+evaluate_utils.HZ_test_on_dimension_groups()
