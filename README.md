@@ -8,7 +8,7 @@ Optimal Worst-case $\sqrt{\epsilon}$-Rate Stability of KL Divergence under Gauss
 ```python experiment_2d_KL_gaussian_perturbation.py```
 
 ### Experiment 3
-See Repo https://github.com/yuffon/KL_stability_NSF/tree/main
+See Repo https://github.com/yuffon/KL_stability_NSF
 
 ### Experiment 4
 1. Download the inference results for the three models from:
