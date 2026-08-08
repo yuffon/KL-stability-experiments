@@ -11,7 +11,11 @@ python experiment_2d_KL_gaussian_perturbation.py
 See Repo 
 
 ### Experiment 4
-python validate_KL_stability_svhn_celeba32_cifar10.py
+1. Download the inference results for the three models from:
+   https://drive.google.com/drive/folders/14iHHcFa7zm49F8POIVmRnIb0MNZraYWb?usp=sharing
+2. Place the three downloaded folders (SVHN, cifar10, and celeba32) into the directory ./infer_results
+3. Run the following command: 
+   python validate_KL_stability_svhn_celeba32_cifar10.py
 
 ### Henze-Zirkler multivariate normality test
 python HZ_test.py
