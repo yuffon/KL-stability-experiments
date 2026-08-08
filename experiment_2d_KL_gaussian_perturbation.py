@@ -2,9 +2,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from pandas.core.computation.expressions import evaluate
 from scipy.stats import norm, truncnorm
 from scipy.special import logsumexp
 from matplotlib.lines import Line2D
+
+import evaluate_utils
+
 
 def rotation(theta):
     c, s = np.cos(theta), np.sin(theta)
@@ -53,6 +57,7 @@ def kl_gaussian(mu1, S1, mu2, S2):
 class TruncatedGMM2D:
     """
     Axis-aligned 2D truncated Gaussian mixture.
+    The rectangular truncation allows exact component normalizing constants.
     """
 
     def __init__(self, weights, means, sigmas, lower, upper, seed=2026):
@@ -109,6 +114,7 @@ class TruncatedGMM2D:
 def mc_kl(samples, logp, mu, Sigma):
     vals = logp - gaussian_logpdf_2d(samples, mu, Sigma)
     return vals.mean(), vals.std(ddof=1) / np.sqrt(samples.shape[0])
+
 
 
 def main():
@@ -174,6 +180,7 @@ def main():
     }
 
     rows = []
+    print("[INFO] neglect runtime warning, because alpha=0 leads to divide by zero, but we still need to plot points for alpha=0...")
     for name, spec in methods.items():
         for alpha in np.linspace(0.0, 1.0, 51):
             mu2 = spec["mu"](alpha)
@@ -185,7 +192,24 @@ def main():
             logn2 = gaussian_logpdf_2d(samples, mu2, S2)
             vals2 = logp - logn2
             diff_vals = logn2 - logn1
+            KL_P_to_N1_minus_KL_P_to_N2 = diff_vals.mean()
             eigs = np.linalg.eigvalsh(S2)
+
+
+            res = evaluate_utils.compute_quantities_nd(mu1, S1, mu2, S2, samples, eps)
+
+            K = res["K"]
+            F1 = res["F1"]
+            F2 = res["F2"]
+            F3 = res["F3"]
+            theorem_constant_K_prime = res["theorem_constant_K_prime"]
+            theorem_bound_B_neglect_o = res["theorem_bound_B_neglect_o"]
+            total_theorem_bound = res["total_theorem_bound"]
+
+            tightness_ratio_to_total_bound = np.abs(KL_P_to_N1_minus_KL_P_to_N2) / total_theorem_bound
+
+            empirical_K_prime = KL_P_to_N1_minus_KL_P_to_N2/np.sqrt(eps)
+
 
             rows.append({
                 "method": name,
@@ -203,7 +227,13 @@ def main():
                 "KL_P_to_N1_MC_SE": se_p_n1,
                 "KL_P_to_N2_MC": vals2.mean(),
                 "KL_P_to_N2_MC_SE": vals2.std(ddof=1) / np.sqrt(n_mc),
-                "KL_P_to_N1_minus_KL_P_to_N2": diff_vals.mean(),
+                "K" : K,
+                "KL_P_to_N1_minus_KL_P_to_N2": KL_P_to_N1_minus_KL_P_to_N2,
+                "theorectical_constant_K_prime" : theorem_constant_K_prime,
+                "total_theorem_bound" : total_theorem_bound,
+                "tightness_ratio_to_total_bound" : tightness_ratio_to_total_bound,
+                "empirical_K_prime" : empirical_K_prime,
+                "theorem_constant_K_prime" : theorem_constant_K_prime,
                 "difference_MC_SE": diff_vals.std(ddof=1) / np.sqrt(n_mc),
                 "sqrt_KL_N1_to_N2": np.sqrt(eps),
             })
@@ -213,7 +243,7 @@ def main():
     max_eps = results["KL_N1_to_N2_closed_form"].max()
     assert max_eps < threshold
 
-    # Grid for contour
+    # Grid for contour visualization.
     grid_n = 170
     x = np.linspace(-4.5, 4.5, grid_n)
     y = np.linspace(-4.5, 4.5, grid_n)
@@ -248,7 +278,6 @@ def main():
         )
 
         plt.axis("equal")
-
         plt.savefig(outdir / f"contour_{name}.png", dpi=220)
         plt.close()
 
@@ -312,6 +341,26 @@ def main():
     plt.savefig(outdir / "kl_difference_vs_sqrt_epsilon_2d.png", dpi=220)
     plt.close()
 
+    plt.figure(figsize=(5.2, 3.0))
+    for method_name in methods.keys():
+        sub = results[results["method"] == method_name]
+        plt.plot(
+            sub["KL_N1_to_N2_closed_form"],
+            sub["total_theorem_bound"],
+            marker="o",
+            markersize=3,
+            linewidth=1.5,
+            label=method_name,
+        )
+    plt.axhline(0.0, linestyle="--", linewidth=1)
+    plt.xlabel("$\epsilon$")
+    plt.ylabel("theoretical bound $B(\epsilon)$")
+    plt.title("theoretical bound versus square-root Gaussian KL")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outdir / "theoretical_bound_vs_epsilon_2d.png", dpi=220)
+    plt.close()
+
     endpoint = results.loc[results.groupby("method")["alpha"].idxmax()]
     endpoint = endpoint[[
         "method", "alpha", "mu2_x", "mu2_y",
@@ -319,6 +368,10 @@ def main():
         "KL_N1_to_N2_closed_form",
         "KL_P_to_N1_MC", "KL_P_to_N2_MC",
         "KL_P_to_N1_minus_KL_P_to_N2",
+        "total_theorem_bound",
+        "tightness_ratio_to_total_bound",
+        "empirical_K_prime",
+        "theorem_constant_K_prime",
         "difference_MC_SE",
     ]]
 

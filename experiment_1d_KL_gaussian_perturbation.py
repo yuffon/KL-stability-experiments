@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm, truncnorm
 from scipy.special import logsumexp
 
-
 class TruncatedGaussianMixture1D:
     """Mixture of two-sided truncated 1D Gaussian components."""
 
@@ -30,6 +29,7 @@ class TruncatedGaussianMixture1D:
         self._log_norm_consts = np.asarray(self._log_norm_consts)
 
     def sample(self, n):
+        """Exact sampling from the mixture of truncated components."""
         comp = self.rng.choice(len(self.weights), size=n, p=self.weights)
         x = np.empty(n, dtype=float)
 
@@ -45,6 +45,7 @@ class TruncatedGaussianMixture1D:
         return x
 
     def logpdf(self, x):
+        """Stable log density of the truncated mixture."""
         x = np.asarray(x, dtype=float)
         log_terms = []
         for w, m, s, log_z in zip(
@@ -63,7 +64,8 @@ def gaussian_logpdf(x, mu, sigma):
 
 def kl_gaussian_1d(mu1, sigma1, mu2, sigma2):
     """
-    Closed-form KL(N1 || N2) for 1D Gaussians
+    Closed-form KL(N1 || N2) for 1D Gaussians.
+    N1 = N(mu1, sigma1^2), N2 = N(mu2, sigma2^2).
     """
     return np.log(sigma2 / sigma1) + (sigma1**2 + (mu1 - mu2) ** 2) / (2.0 * sigma2**2) - 0.5
 
@@ -76,10 +78,57 @@ def mc_kl_p_to_gaussian(samples, logp_samples, mu, sigma):
     return estimate, se
 
 
+def compute_quantities_1d(mu1, sigma1, mu2, sigma2, samples, eps):
+    dim = 1
+
+    Ep_abs_x = np.mean(np.abs(samples))
+    Ep_x2 = np.mean(samples ** 2)
+
+    # F1
+    F1 = (np.sqrt(2) * np.abs(mu2)/sigma2+(np.sqrt(6)/2)* (mu1 ** 2)/(sigma1 ** 2))
+    # F2
+    F2 = (np.sqrt(6)*np.abs(mu2)/(sigma1 ** 2)+np.sqrt(2) / sigma2) * Ep_abs_x
+    # F3
+    F3 = ((np.sqrt(6)/2) * Ep_x2/ (sigma1 ** 2) )
+
+    K = F1 + F2 + F3
+
+    theorem_constant_K_prime = (np.sqrt(6) / 2 + K)
+    theorem_bound_B_neglect_o = (np.sqrt(6) / 2) * np.sqrt(eps) + K * np.sqrt(eps)
+
+    #1 dimensional case, these bounds in the paper can be reduced by
+    T1 = -dim * np.log(1-np.sqrt(6 * eps / dim))
+    T21 = ( 2 * np.sqrt(2) * abs(mu2) / sigma2 * np.sqrt(eps)) +  2 * eps
+    T22 = np.sqrt(6) * (mu1**2 / sigma1**2) * np.sqrt(eps)
+    T2 = T21 + T22
+    bound_a = 0.5 * T1 +0.5 * T2
+
+    term_sqrt = ((np.sqrt(6) * abs(mu2) / sigma1 ** 2 + np.sqrt(2) / sigma2 ) * Ep_abs_x * np.sqrt(eps) )
+    term_eps = ( 2 * np.sqrt(3) * sigma2 / sigma1 ** 2 * Ep_abs_x * eps)
+
+    bound_b_Epx = term_sqrt + term_eps
+    bound_EpxtMx = (np.sqrt(6) / 2 * Ep_x2 / sigma1**2 * np.sqrt(eps))
+
+    total_theorem_bound = bound_a + bound_b_Epx + bound_EpxtMx
+
+
+    return {
+        "K": K,
+        "F1" :F1,
+        "F2" : F2,
+        "F3" : F3,
+        "theorem_constant_K_prime" : theorem_constant_K_prime,
+        "theorem_bound_B_neglect_o" : theorem_bound_B_neglect_o,
+        "total_theorem_bound" : total_theorem_bound,
+    }
+
+# 2. Experiment configuration
+
 def main():
     outdir = Path("./data/experiment1_kl_outputs")
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # Non-Gaussian P: two-component truncated Gaussian mixture.
     P = TruncatedGaussianMixture1D(
         weights=[0.5, 0.5],
         means=[-2.2, 2.2],
@@ -89,10 +138,11 @@ def main():
         seed=2026,
     )
 
-    # Gaussian N1.
+    # N1
     mu1 = 0.0
     sigma1 = 1.0
 
+    # The theorem assumes small Gaussian perturbation.
     epsilon_threshold = 1.0 / 12.0
 
     # Monte Carlo samples from P.
@@ -102,9 +152,11 @@ def main():
 
     kl_p_n1, se_p_n1 = mc_kl_p_to_gaussian(samples, logp_samples, mu1, sigma1)
 
-
+    # Reuse the same Monte Carlo samples for every perturbation.
     logn1_samples = gaussian_logpdf(samples, mu1, sigma1)
 
+    # Perturbation paths. alpha in [0, 1].
+    # All endpoints are chosen so that KL(N1||N2) < 1/12.
     methods = {
         "mean-plus": {
             "label": "mean perturbation: mu2 = mu1 + 0.40 alpha",
@@ -155,9 +207,21 @@ def main():
             kl_p_n2 = kl_p_n2_values.mean()
             se_p_n2 = kl_p_n2_values.std(ddof=1) / np.sqrt(samples.size)
 
-            diff_values = logn2_samples - logn1_samples
-            diff = diff_values.mean()
-            diff_se = diff_values.std(ddof=1) / np.sqrt(samples.size)
+            diff_kl_values = logn2_samples - logn1_samples
+            diff_kl = diff_kl_values.mean()
+            diff_se = diff_kl_values.std(ddof=1) / np.sqrt(samples.size)
+
+            res = compute_quantities_1d(mu1, sigma1, mu2, sigma2, samples, eps)
+            K = res["K"]
+            F1 = res["F1"]
+            F2 = res["F2"]
+            F3 = res["F3"]
+            theorem_constant_K_prime = res["theorem_constant_K_prime"]
+            theorem_bound_B_neglect_o = res["theorem_bound_B_neglect_o"]
+            total_theorem_bound = res["total_theorem_bound"]
+
+            tightness_ratio_to_B_neglect_o = np.abs(diff_kl) / theorem_bound_B_neglect_o
+            tightness_ratio_to_total_bound = np.abs(diff_kl) / total_theorem_bound
 
             rows.append(
                 {
@@ -171,10 +235,19 @@ def main():
                     "KL_P_to_N1_MC_SE": se_p_n1,
                     "KL_P_to_N2_MC": kl_p_n2,
                     "KL_P_to_N2_MC_SE": se_p_n2,
-                    "KL_P_to_N1_minus_KL_P_to_N2": diff,
+                    "KL_P_to_N1_minus_KL_P_to_N2": diff_kl,
+                    "K": K,
+                    "F1": F1,
+                    "F2": F2,
+                    "F3": F3,
+                    "theorem_constant_K_prime":theorem_constant_K_prime,
+                    "theorem_bound_B_neglect_o" : theorem_bound_B_neglect_o,
+                    "total_theorem_bound" : total_theorem_bound,
+                    "tightness_ratio_to_B_neglect_o" : tightness_ratio_to_B_neglect_o,
+                    "tightness_ratio_to_total_bound" : tightness_ratio_to_total_bound,
                     "difference_MC_SE": diff_se,
                     "sqrt_KL_N1_to_N2": np.sqrt(eps),
-                    "K_d": diff/np.sqrt(eps),
+                    "estimated_widehat_K_prime": diff_kl/np.sqrt(eps),
                 }
             )
 
@@ -184,11 +257,11 @@ def main():
     max_eps = results["KL_N1_to_N2_closed_form"].max()
     assert max_eps < epsilon_threshold
 
-    max_K_d = results["K_d"].max()
-    print("max K_d: ", max_K_d)
+    max_estimated_widehat_K_prime = results["estimated_widehat_K_prime"].max()
+    print("max K_d: ", max_estimated_widehat_K_prime)
 
+    # 3. Visualization
 
-    # plot
     x_grid = np.linspace(-5.0, 5.0, 1200)
     p_grid = np.exp(P.logpdf(x_grid))
     n1_grid = np.exp(gaussian_logpdf(x_grid, mu1, sigma1))
@@ -282,9 +355,49 @@ def main():
     plt.savefig(outdir / "kl_difference_vs_sqrt_epsilon.png", dpi=220)
     plt.close()
 
+    plt.figure(figsize=(5.2, 3.0))
+    for method_name in methods.keys():
+        sub = results[results["method"] == method_name]
+        plt.plot(
+            sub["sqrt_KL_N1_to_N2"],
+            sub["total_theorem_bound"],
+            marker="o",
+            markersize=3,
+            linewidth=1.5,
+            label=method_name,
+        )
+    plt.axhline(0.0, linestyle="--", linewidth=1)
+    plt.xlabel("$\sqrt{\mathrm{KL}(N_1||N_2)}$")
+    plt.ylabel("theoretical bound $B(\epsilon)$")
+    plt.title("theoretical bound versus square-root Gaussian KL")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outdir / "theoretical_bound_vs_sqrt_epsilon.png", dpi=220)
+    plt.close()
+
+    plt.figure(figsize=(5.2, 3.0))
+    for method_name in methods.keys():
+        sub = results[results["method"] == method_name]
+        plt.plot(
+            sub["KL_N1_to_N2_closed_form"],
+            sub["total_theorem_bound"],
+            marker="o",
+            markersize=3,
+            linewidth=1.5,
+            label=method_name,
+        )
+    plt.axhline(0.0, linestyle="--", linewidth=1)
+    plt.xlabel("$\epsilon$")
+    plt.ylabel("theoretical bound $B(\epsilon)$")
+    plt.title("theoretical bound versus Gaussian KL")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outdir / "theoretical_bound_vs_epsilon_1d.png", dpi=220)
+    plt.close()
 
 
 
+    # Print a compact summary.
     endpoint = results.loc[results.groupby("method")["alpha"].idxmax()].copy()
     endpoint = endpoint[
         [
@@ -296,6 +409,10 @@ def main():
             "KL_P_to_N1_MC",
             "KL_P_to_N2_MC",
             "KL_P_to_N1_minus_KL_P_to_N2",
+            "estimated_widehat_K_prime",
+            "theorem_constant_K_prime",
+            "total_theorem_bound",
+            "tightness_ratio_to_total_bound",
             "difference_MC_SE",
         ]
     ]
@@ -306,7 +423,6 @@ def main():
     print(f"Max KL(N1||N2) over all retained perturbations = {max_eps:.6f} < 1/12 = {epsilon_threshold:.6f}")
     print("\nEndpoint summary:")
     print(endpoint.to_string(index=False))
-
 
 if __name__ == "__main__":
     main()
