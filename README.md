@@ -1,4 +1,4 @@
-## Experiments code for paper 
+## Experimental code for paper 
 Optimal Worst-case $\sqrt{\epsilon}$-Rate Stability of KL Divergence under Gaussian Perturbations
 
 ### Experiment 1
