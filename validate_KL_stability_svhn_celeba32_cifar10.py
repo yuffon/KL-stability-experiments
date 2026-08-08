@@ -5,7 +5,7 @@ import evaluate_utils
 from scipy.stats import pearsonr
 
 
-infer_results_dir = "/home/data2/research/myprojects/2026KL-property/infer_results/"
+infer_results_dir = "./infer_results/"
 
 ID = "cifar10" # svhn celeba32 cifar10
 print("########################## ID: " + ID +" ##########################")
